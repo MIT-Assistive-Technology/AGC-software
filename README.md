@@ -189,3 +189,4 @@ python -m pytest tests/unit/voice_input/
 # Run integration tests
 python -m pytest tests/integration/
 ```
+Aurora
