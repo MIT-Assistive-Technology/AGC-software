@@ -189,10 +189,10 @@ python -m pytest tests/unit/voice_input/
 # Run integration tests
 python -m pytest tests/integration/
 ```
-Our Team:
-Aurora
-Rachel Yeung
-Matthew
-Wade Rogers
-Erik 
-Mellanie Rodriguez
+# Our Team:
+- Aurora
+- Rachel Yeung
+- Matthew
+- Wade Rogers
+- Erik 
+- Mellanie Rodriguez
