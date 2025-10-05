@@ -194,5 +194,6 @@ python -m pytest tests/integration/
 - Rachel Yeung
 - Matthew
 - Wade Rogers
-- Erik 
+- Erik
 - Mellanie Rodriguez
+- Maggie Zhang
