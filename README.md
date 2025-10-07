@@ -52,6 +52,7 @@ AGC-software/
 │   ├── voice_input/             # Voice input processing
 │   ├── screen_capture/          # Screen capture and analysis
 │   ├── ai_agent/                # AI processing and decision making
+│   ├── local_server/            # Local server API (planned)
 │   ├── voice_response/          # Text-to-speech and audio output
 │   ├── game_integration/        # Game-specific integrations
 │   └── utils/                   # Shared utilities
@@ -160,6 +161,14 @@ python src/main.py
   - `ui_templates.py` - Common UI patterns
   - `integration_manager.py` - Manage game integrations
 - **Dependencies**: Game-specific libraries as needed
+
+### 6. Local Server (planned) (`src/local_server/`)
+**Team Members: 1 developer**
+- **Responsibility**: Host a local server that exposes selected AGC functions for other devices on the same network to query or control.
+- **Scope**: Health/status endpoints, command submission, optional on-demand screenshot analysis. Runs locally alongside the app.
+- **Security (planned)**: Localhost by default; optional LAN binding; token-based access for non-health endpoints.
+- **Entry (future)**: `python -m src.local_server`
+- **Notes**: This component is not implemented yet; see `src/local_server/README.md` for the planned API surface.
 
 ## Development Workflow
 
