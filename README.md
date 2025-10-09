@@ -206,4 +206,3 @@ python -m pytest tests/integration/
 - Erik
 - Mellanie Rodriguez
 - Maggie Zhang
-- Rojina Adhikari
