@@ -1,5 +1,11 @@
-"""Local Server component placeholder.
+"""Local Server component.
 
-This package will host a local API surface for external devices to control
-and query the AGC application. Implementation intentionally omitted.
+This package hosts a local API surface for external devices to control
+and query the AGC application using FastAPI.
 """
+
+from .app import app
+
+__all__ = ["app"]
+
+

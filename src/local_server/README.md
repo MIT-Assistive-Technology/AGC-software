@@ -1,44 +1,99 @@
-# Local Server Component (planned)
+# Local Server Component
 
-This component will expose selected functionality from the AGC application over a local server so that other devices on the same network can send requests. This document outlines the intended scope and design at a high level. No implementation is provided yet.
+This component exposes selected functionality from the AGC application over a local HTTP server so that other devices on the same network can send requests. The server is built using FastAPI and provides RESTful endpoints for audio processing and health monitoring.
 
-## Goals
-- Provide a lightweight HTTP (or WebSocket) interface for remote control and status queries
-- Run locally alongside the main app with minimal configuration
-- Authenticate requests originating from trusted devices on the local network
-- Enforce clear separation between API boundary and internal modules
+## Features
 
-## Non-Goals (initial phase)
-- Cloud exposure or remote tunneling
-- Long-term stateful session management
-- Complex rate limiting or quotas
+- **Audio Processing Endpoint**: Accepts audio file uploads and returns JSON analysis results
+- **Health Check Endpoint**: Provides server status and monitoring information
+- **FastAPI Integration**: Automatic API documentation and validation
+- **Local Network Access**: Runs on localhost with optional LAN exposure
 
-## Proposed Endpoints (subject to change)
-- `GET /health`: Liveness/readiness checks
-- `GET /status`: Summary of current app state (voice input status, last analysis timestamp, etc.)
-- `POST /command`: Submit a high-level command (e.g., "read options", "select option N")
-- `POST /screenshot/analyze`: Trigger a one-off analysis
+## Endpoints
 
-## Security Considerations
-- Bind only to localhost by default; optional LAN exposure via explicit config
-- Require a shared secret or token for all non-health endpoints
-- Log all requests and decisions with minimal PII
+### Health Check
+- **GET** `/health` - Returns server status, uptime, and request statistics
 
-## Integration Points
-- Calls into `src/voice_input/` for command handling paths
-- Invokes `src/screen_capture/` for on-demand analysis
-- Uses `src/ai_agent/` for interpretation and response generation
+### Audio Processing
+- **POST** `/audio/process` - Upload audio file and receive analysis results
+  - Accepts: Audio files (WAV, MP3, etc.)
+  - Returns: JSON with transcription, detected commands, and suggested actions
+
+### Root
+- **GET** `/` - Basic API information and available endpoints
+
+## Quick Start
+
+### Installation
+```bash
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Running the Server
+```bash
+# Run directly
+python -m src.local_server.app
+
+# Or using uvicorn directly
+uvicorn src.local_server.app:app --host 127.0.0.1 --port 8000
+
+# Access API documentation
+# Open http://127.0.0.1:8000/docs in your browser
+```
+
+### Example Usage
+
+#### Health Check
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+#### Audio Processing
+```bash
+curl -X POST "http://127.0.0.1:8000/audio/process" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "audio_file=@example.wav"
+```
+
+## Implementation Status
+
+**Current**: Placeholder implementation with mock responses
+- Audio endpoint returns structured mock data
+- Health endpoint provides real server statistics
+- File validation and error handling implemented
+
+**Future Integration Points**:
+- Connect to `src/voice_input/` for actual speech-to-text processing
+- Integrate with `src/ai_agent/` for command analysis
+- Use `src/screen_capture/` for on-demand screenshot analysis
+- Add authentication and rate limiting
 
 ## Configuration
-- Add configuration surface in `src/config/settings.py` (e.g., `LOCAL_SERVER_ENABLED`, `LOCAL_SERVER_HOST`, `LOCAL_SERVER_PORT`, `LOCAL_SERVER_TOKEN`)
 
-## Run (future)
-```
-python -m src.local_server
-```
+The server currently runs with default settings:
+- Host: `127.0.0.1` (localhost only)
+- Port: `8000`
+- No authentication (planned for future)
 
-## Next Steps
-- Finalize API surface and request/response schemas
-- Pick framework (FastAPI, Flask, or built-in `http.server`) aligning with project standards
-- Implement minimal health and status endpoints behind token auth
+Future configuration options will be added to `src/config/settings.py`:
+- `LOCAL_SERVER_ENABLED`
+- `LOCAL_SERVER_HOST`
+- `LOCAL_SERVER_PORT`
+- `LOCAL_SERVER_TOKEN`
+
+## Security Considerations
+
+- Currently runs on localhost only
+- No authentication implemented (planned)
+- File upload validation in place
+- Error handling prevents information leakage
+- Logging for audit trail
+
+## Dependencies
+
+- `fastapi>=0.104.0` - Web framework
+- `uvicorn[standard]>=0.24.0` - ASGI server
+- `python-multipart>=0.0.6` - File upload support
 
