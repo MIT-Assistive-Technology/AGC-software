@@ -32,6 +32,14 @@ psutil>=5.9.0
 win32gui>=221.6  # Windows only
 pygetwindow>=0.0.9
 
+# Local Server API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Raspberry Pi Hardware
+RPi.GPIO>=0.7.1
+
 # Development
 pytest>=7.4.0
 pytest-cov>=4.1.0

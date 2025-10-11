@@ -35,7 +35,7 @@ app_state = {
 async def health_check() -> Dict[str, Any]:
     """
     Health check endpoint for monitoring server status.
-    To be implemented later.
+    To be implemented later, should check for video stream and audio stream, etc. 
     Returns:
         Dict containing server status information
     """
