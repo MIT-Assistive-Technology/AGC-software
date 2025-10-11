@@ -35,7 +35,7 @@ The system uses AI to analyze screenshots, understand game interfaces, and provi
                     └─────────────────┘
 ```
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 AGC-software/
@@ -52,9 +52,8 @@ AGC-software/
 │   ├── voice_input/             # Voice input processing
 │   ├── screen_capture/          # Screen capture and analysis
 │   ├── ai_agent/                # AI processing and decision making
-│   ├── local_server/            # Local server API (planned)
+│   ├── local_server/            # Local server API with FastAPI
 │   ├── voice_response/          # Text-to-speech and audio output
-│   ├── game_integration/        # Game-specific integrations
 │   └── utils/                   # Shared utilities
 │
 ├── tests/                       # Test suites
@@ -78,7 +77,10 @@ AGC-software/
 │   ├── audio/                   # Audio samples and templates
 │   └── game_configs/            # Game-specific configurations
 │
-└── hardware/                    # Future hardware integration
+└── hardware/                    # Hardware integration
+    ├── pi_audio_controller.py   # Raspberry Pi Zero W audio controller
+    ├── setup_pi.sh              # Pi setup script
+    ├── README.md                # Hardware documentation
     ├── microchip/               # Microchip code (future)
     ├── controller/              # Controller firmware (future)
     └── specs/                   # Hardware specifications
@@ -162,13 +164,32 @@ python src/main.py
   - `integration_manager.py` - Manage game integrations
 - **Dependencies**: Game-specific libraries as needed
 
-### 6. Local Server (planned) (`src/local_server/`)
+### 6. Local Server (`src/local_server/`)
 **Team Members: 1 developer**
-- **Responsibility**: Host a local server that exposes selected AGC functions for other devices on the same network to query or control.
-- **Scope**: Health/status endpoints, command submission, optional on-demand screenshot analysis. Runs locally alongside the app.
-- **Security (planned)**: Localhost by default; optional LAN binding; token-based access for non-health endpoints.
-- **Entry (future)**: `python -m src.local_server`
-- **Notes**: This component is not implemented yet; see `src/local_server/README.md` for the planned API surface.
+- **Responsibility**: Host a local FastAPI server that exposes AGC functions for external devices to query or control
+- **Key Files**:
+  - `app.py` - FastAPI application with audio processing and health endpoints
+  - `README.md` - API documentation and usage examples
+- **Endpoints**: 
+  - `POST /audio/process` - Upload audio file and receive analysis results
+  - `GET /health` - Server status and monitoring
+- **Dependencies**: `fastapi`, `uvicorn`, `python-multipart`
+- **Entry**: `python -m src.local_server.app` or `uvicorn src.local_server.app:app`
+
+### 7. Hardware Integration (`hardware/`)
+**Team Members: 1-2 developers**
+- **Responsibility**: Raspberry Pi Zero W controller for physical voice input
+- **Key Files**:
+  - `pi_audio_controller.py` - Main Pi controller with GPIO button and LED
+  - `setup_pi.sh` - Automated Pi setup script
+  - `README.md` - Hardware documentation and wiring guide
+- **Features**: 
+  - Button-triggered audio recording
+  - LED status feedback
+  - HTTP communication with local server
+  - Continuous mode operation
+- **Dependencies**: `RPi.GPIO`, `pyaudio`, `requests`
+- **Hardware**: Raspberry Pi Zero W, push button, LED, USB microphone
 
 ## Development Workflow
 
@@ -203,7 +224,7 @@ python -m pytest tests/integration/
 - Rachel Yeung
 - Matthew
 - Wade Rogers
-- Erik
+- Erik Xie
 - Mellanie Rodriguez
 - Maggie Zhang
 - Rojina Adhikari
