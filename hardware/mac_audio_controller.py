@@ -19,7 +19,7 @@ import numpy as np
 from scipy.io.wavfile import write as write_wav
 from pynput import keyboard
 from threading import Event
-from typing import Optional # <--- IMPORT THIS
+from typing import Optional 
 
 # Configure logging
 logging.basicConfig(
@@ -29,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-# ❗️ IMPORTANT: Change this to the IP address of the computer running the FastAPI server
+# Change this to the IP address of the computer running the FastAPI server
 SERVER_HOST = "127.0.0.1" # Use 127.0.0.1 if server is on the same Mac
 SERVER_PORT = 8000
 AUDIO_SAMPLE_RATE = 44100
@@ -129,7 +129,7 @@ class MacOSAudioController:
     def check_server_health(self) -> bool:
         """Check if the server is reachable."""
         try:
-            response = requests.get(f"{self.server_url}/", timeout=5)
+            response = requests.get(f"{self.server_url}/", timeout=5) # this is the root endpoint we defined 
             return response.status_code == 200
         except requests.exceptions.RequestException:
             logger.error(f"Server at {self.server_url} is not reachable.")

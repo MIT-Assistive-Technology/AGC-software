@@ -38,8 +38,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Configuration ---
-# ❗️ IMPORTANT: Change this to the IP address of the computer running the server
+
 SERVER_HOST = "192.168.1.100"  
 SERVER_PORT = 8000
 AUDIO_SAMPLE_RATE = 44100
