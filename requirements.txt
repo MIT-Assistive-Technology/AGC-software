@@ -1,52 +1,11 @@
-# Core dependencies
-python-dotenv>=1.0.0
-pydantic>=2.0.0
-loguru>=0.7.0
-
-# Voice Input
-pynput>=1.7.6
-SpeechRecognition>=3.10.0
-pyaudio>=0.2.11
-keyboard>=0.13.5
-
-# Screen Capture
-Pillow>=10.0.0
-pyautogui>=0.9.54
-opencv-python>=4.8.0
-mss>=9.0.1
-
-# AI/ML
-openai>=1.0.0
-transformers>=4.30.0
-torch>=2.0.0
-numpy>=1.24.0
-scikit-image>=0.21.0
-
-# Voice Response
-pyttsx3>=2.90
-pygame>=2.5.0
-sounddevice>=0.4.6
-
-# Game Integration
-psutil>=5.9.0
-win32gui>=221.6  # Windows only
-pygetwindow>=0.0.9
-
-# Local Server API
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-python-multipart>=0.0.6
-
-# Raspberry Pi Hardware
-RPi.GPIO>=0.7.1
-
-# Development
-pytest>=7.4.0
-pytest-cov>=4.1.0
-black>=23.0.0
-flake8>=6.0.0
-mypy>=1.5.0
-
-# Optional: Alternative AI services
-# anthropic>=0.3.0
-# google-cloud-speech>=2.21.0
+fastapi
+uvicorn[standard]
+python-multipart
+openai
+mss
+python-dotenv
+pynput 
+sounddevice 
+scipy 
+numpy 
+requests
