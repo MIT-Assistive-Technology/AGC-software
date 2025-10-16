@@ -158,14 +158,14 @@ def main():
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/{image_format};base64,{base64_image}",
-                                "detail": "high"  # Use high detail for better analysis of specific parts
+                                "detail": "high"  # Use high detail for better analysis of specific parts #TODO: is this causing delay?
                             }
                         }
                     ]
                 }
 
                 # Build messages with history (vision models don't always support system messages with images)
-                messages = [system_message] + conversation_history + [user_message]
+                messages = [system_message] + conversation_history + [user_message] #TODO: Ensure that this doesn't mean lag after multiple queries
                 model = "gpt-4o-mini"  # Vision-capable model
                 print(f"\n[Processing image: {Path(image_path).name}]")
                 print(f"[Question: {text_prompt}]")
@@ -190,7 +190,7 @@ def main():
 
             # Add to conversation history
             # For images, store a text-only version in history to avoid token limits
-            if image_path:
+            if image_path: #TODO: look into how much the abridged text version contains
                 conversation_history.append({"role": "user", "content": f"[Image: {Path(image_path).name}] {text_prompt}"})
             else:
                 conversation_history.append({"role": "user", "content": text_prompt})
@@ -198,7 +198,7 @@ def main():
             conversation_history.append({"role": "assistant", "content": ai_response})
 
             # Keep history manageable (last 10 exchanges = 20 messages)
-            if len(conversation_history) > 20:
+            if len(conversation_history) > 20: #TODO: ok, here's our answer to the questions above, but is it better to summarize or something else? how can we mark critical prompts to not forget?
                 conversation_history = conversation_history[-20:]
 
         except Exception as e:
