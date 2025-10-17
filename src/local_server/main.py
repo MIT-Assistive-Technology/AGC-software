@@ -5,12 +5,47 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from dotenv import load_dotenv
-import mss
-import mss.tools
+import cv2
+import numpy as np
 from pathlib import Path
 
 # Load environment vars
 load_dotenv(dotenv_path = "../../.env")
+
+# Configuration for capture card
+CAPTURE_CARD_INDEX = int(os.getenv("CAPTURE_CARD_INDEX", "0"))  # Default to device 0
+
+def list_video_devices():
+    """List all available video capture devices."""
+    devices = []
+    index = 0
+    while True:
+        cap = cv2.VideoCapture(index)
+        if not cap.read()[0]:
+            break
+        else:
+            devices.append(index)
+        cap.release()
+        index += 1
+    return devices
+
+def capture_from_capture_card(device_index: int = CAPTURE_CARD_INDEX):
+    """
+    Capture a frame from the specified capture card device.
+    Returns the frame as a numpy array, or None if capture fails.
+    """
+    cap = cv2.VideoCapture(device_index)
+    
+    if not cap.isOpened():
+        raise Exception(f"Could not open video device {device_index}")
+    
+    try:
+        ret, frame = cap.read()
+        if not ret:
+            raise Exception(f"Could not read frame from video device {device_index}")
+        return frame
+    finally:
+        cap.release()
 
 # Initialize the FastAPI app
 app = FastAPI(
@@ -34,7 +69,7 @@ async def analyze_screen(audio_file: UploadFile = File(..., description="Audio c
     """
     if not client:
         raise HTTPException(status_code=500, detail="OpenAI client not initialized. Check API key.")
-
+    
     try:
         print("Transcribing audio...")
         audio_bytes = await audio_file.read()
@@ -50,15 +85,21 @@ async def analyze_screen(audio_file: UploadFile = File(..., description="Audio c
         )
         user_prompt = transcription.text
         print(f"User prompt: '{user_prompt}'")
-        print("Taking screenshot...")
-        with mss.mss() as sct:
-            # screenshot the primary monitor
-            monitor = sct.monitors[1]
-            sct_img = sct.grab(monitor)
+        print("Taking screenshot from capture card...")
 
-            # raw BGRA image to PNG bytes and encode to base64
-            png_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
+        try:
+            frame = capture_from_capture_card()
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            success, png_bytes = cv2.imencode('.png', frame_rgb)
+            if not success:
+                raise Exception("Failed to encode frame as PNG")
             base64_image = base64.b64encode(png_bytes).decode('utf-8')
+            
+        except Exception as e:
+            print(f"Capture card error: {e}")
+            available_devices = list_video_devices()
+            print(f"Available video devices: {available_devices}")
+            raise HTTPException(status_code=500, detail=f"Capture card error: {e}")
 
         print("Analyzing screenshot with GPT-4o...")
         response = client.chat.completions.create(
@@ -103,3 +144,19 @@ async def analyze_screen(audio_file: UploadFile = File(..., description="Audio c
 @app.get("/", include_in_schema=False)
 async def root():
     return {"message": "Server is running. Nothing to see here."}
+
+@app.get("/video-devices", 
+         summary="List Available Video Devices",
+         description="Returns a list of available video capture devices.",
+         tags=["Debug"])
+async def get_video_devices():
+    """Endpoint to list all available video capture devices."""
+    try:
+        devices = list_video_devices()
+        return {
+            "available_devices": devices,
+            "current_capture_card_index": CAPTURE_CARD_INDEX,
+            "message": f"Found {len(devices)} video device(s). Current capture card is set to device {CAPTURE_CARD_INDEX}."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
