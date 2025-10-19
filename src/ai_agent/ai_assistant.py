@@ -59,7 +59,9 @@ def main():
 
     # Initialize conversation history
     conversation_history = []
-    system_message = {"role": "system", "content": "You are a helpful assistant with vision capabilities. You can analyze images and answer questions about them. IMPORTANT: For numeric answers, provide only the number without explanation.Keep all responses extremely short."}
+    #TODO: change system message so that it says "only the number" vs "only the number and any necessary units". Why little to no difference?
+    #TODO: actually, there is a difference, but only sometimes. investigate if this is predictable or not, and if not, how can we standardize it?
+    system_message = {"role": "system", "content": "You are a helpful assistant with vision capabilities. You can analyze images and answer questions about them. IMPORTANT: For numeric answers, provide only the number and necessary units without explanation. Keep all responses extremely short."}
 
     print("AI Assistant with Vision (type 'exit' to quit)")
     print("Usage:")
@@ -181,7 +183,8 @@ def main():
             # Call the OpenAI API
             response = client.chat.completions.create(
                 model=model,
-                messages=messages
+                messages=messages,
+                #stream = True #TODO: figure out why this caused an error and how to get instantaneous responses
             )
 
             # Print the response
