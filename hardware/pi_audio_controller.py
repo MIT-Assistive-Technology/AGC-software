@@ -1,251 +1,268 @@
-#!/usr/bin/env python3
-"""
-Raspberry Pi Zero W Audio Controller Script (Updated)
-
-This script runs on a Raspberry Pi and interacts with the screen analysis server:
-1. Waits for a button press.
-2. Records audio from a microphone.
-3. Sends the audio to the server's /analyze-screen/ endpoint.
-4. Receives an audio response and plays it back.
-
-Hardware Requirements:
-- Raspberry Pi
-- USB microphone
-- A button and LED connected to GPIO pins.
-"""
-
-import os
-import sys
+import machine
 import time
-import requests
-import logging
-import sounddevice as sd
-import numpy as np
-from scipy.io.wavfile import write as write_wav
-from typing import Optional
+import array
+import network
+import urequests
+import struct
+from machine import I2S, Pin
 
+# --- CONFIGURATION ---
+# Update these with your network details
+WIFI_SSID = "MIT"
+WIFI_PASSWORD = "$$4b4P(LwG"
+
+# Update with your computer's IP address (find using ipconfig/ifconfig)
+# ipconfig getifaddr en0
+# Make sure to use port 8000
+SERVER_IP = "10.29.151.42"
+SERVER_PORT = "8000"
+
+# Choose capture mode:
+# False = Screen screenshot (captures entire screen on server)
+# True = Capture card (captures from video capture device)
+USE_CAPTURE_CARD = False
+
+# --- Pin Definitions ---
+# Microphone (SPH0645LM4H) - I2S 0
+MIC_BCLK_PIN = 9
+MIC_WS_PIN = 10
+MIC_SD_PIN = 11
+
+# Amplifier (MAX98357) - I2S 1
+AMP_BCLK_PIN = 12
+AMP_WS_PIN = 13
+AMP_SD_PIN = 14
+
+# Button
+BUTTON_PIN_NUM = 15  # GP15
+
+# --- Audio Configuration ---
+SAMPLE_RATE = 16000
+BITS_PER_SAMPLE = 16
+RECORD_SECONDS = 3  # Record for 3 seconds
+NUM_SAMPLES = SAMPLE_RATE * RECORD_SECONDS
+
+print("=" * 50)
+print("Gaming Assistant - Audio Control")
+print("=" * 50)
+print(f"Capture Mode: {'Capture Card' if USE_CAPTURE_CARD else 'Screen Screenshot'}")
+print()
+
+def connect_wifi():
+    """Connect to WiFi network."""
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    
+    if wlan.isconnected():
+        print("✅ Already connected to WiFi")
+        print(f"   IP: {wlan.ifconfig()[0]}")
+        return wlan
+    
+    print(f"📡 Connecting to: {WIFI_SSID}")
+    wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+    
+    max_wait = 10
+    while max_wait > 0:
+        if wlan.isconnected():
+            break
+        max_wait -= 1
+        print("   Waiting for connection...")
+        time.sleep(1)
+    
+    if wlan.isconnected():
+        print("✅ WiFi connected!")
+        print(f"   IP: {wlan.ifconfig()[0]}")
+        return wlan
+    else:
+        print("❌ WiFi connection failed!")
+        return None
+
+# Connect to WiFi
+wlan = connect_wifi()
+if not wlan:
+    print("Cannot proceed without WiFi. Exiting.")
+    raise SystemExit
+
+print()
+
+# --- Initialize Microphone ---
 try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except (ImportError, RuntimeError):
-    GPIO_AVAILABLE = False
-    print("Warning: RPi.GPIO not available. Button functionality will be disabled.")
+    i2s_mic = I2S(
+        0,
+        sck=Pin(MIC_BCLK_PIN),
+        ws=Pin(MIC_WS_PIN),
+        sd=Pin(MIC_SD_PIN),
+        mode=I2S.RX,
+        bits=BITS_PER_SAMPLE,
+        format=I2S.MONO,
+        rate=SAMPLE_RATE,
+        ibuf=4096
+    )
+    print("✅ Microphone initialized")
+except Exception as e:
+    print(f"❌ Failed to initialize microphone: {e}")
+    raise SystemExit
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# --- Initialize Amplifier ---
+try:
+    i2s_amp = I2S(
+        1,
+        sck=Pin(AMP_BCLK_PIN),
+        ws=Pin(AMP_WS_PIN),
+        sd=Pin(AMP_SD_PIN),
+        mode=I2S.TX,
+        bits=BITS_PER_SAMPLE,
+        format=I2S.MONO,
+        rate=SAMPLE_RATE,
+        ibuf=4096
+    )
+    print("✅ Amplifier initialized")
+except Exception as e:
+    print(f"❌ Failed to initialize amplifier: {e}")
+    i2s_mic.deinit()
+    raise SystemExit
 
+# --- Initialize Button ---
+button = Pin(BUTTON_PIN_NUM, Pin.IN, Pin.PULL_UP)
 
-SERVER_HOST = "192.168.1.100"  
-SERVER_PORT = 8000
-AUDIO_SAMPLE_RATE = 44100
-RECORDING_DURATION = 4  # seconds
-TEMP_RECORDING_PATH = "temp_recording.wav"
-TEMP_RESPONSE_PATH = "temp_response.mp3"
+print()
 
-# GPIO Configuration
-BUTTON_PIN = 18  # GPIO pin for the push button
-LED_PIN = 24     # GPIO pin for status LED
-BUTTON_DEBOUNCE_TIME = 300  # milliseconds
+# Create audio buffer
+audio_buffer = array.array('h', (0 for _ in range(NUM_SAMPLES)))
 
-
-class PiAudioController:
-    """Main controller class for Raspberry Pi audio operations."""
-    
-    def __init__(self, server_host: str = SERVER_HOST, server_port: int = SERVER_PORT):
-        self.server_url = f"http://{server_host}:{server_port}"
-        self.button_pressed = False
-        self.processing = False
+print("=" * 50)
+print("🎮 Ready! Press the button to ask about the game.")
+print("=" * 50)
+print()
+try:
+    while True:
+        # Wait for button press
+        # button.value() is 1 (HIGH) when not pressed (PULL_UP)
+        # and 0 (LOW) when pressed
+        while button.value() == 1:
+            time.sleep(0.01)
         
-        if GPIO_AVAILABLE:
-            self.setup_gpio()
-    
-    def setup_gpio(self):
-        """Setup GPIO pins for button and LED."""
-        try:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            GPIO.setup(LED_PIN, GPIO.OUT)
-            GPIO.output(LED_PIN, GPIO.LOW)
-            GPIO.add_event_detect(
-                BUTTON_PIN, 
-                GPIO.FALLING, 
-                callback=self.button_callback,
-                bouncetime=BUTTON_DEBOUNCE_TIME
-            )
-            logger.info(f"GPIO setup complete - Button: GPIO{BUTTON_PIN}, LED: GPIO{LED_PIN}")
-        except Exception as e:
-            logger.error(f"GPIO setup failed: {str(e)}")
-    
-    def button_callback(self, channel):
-        """Callback function for button press events."""
-        if not self.processing:
-            self.button_pressed = True
-    
-    def set_led_status(self, on: bool):
-        """Control the status LED."""
-        if GPIO_AVAILABLE:
-            GPIO.output(LED_PIN, GPIO.HIGH if on else GPIO.LOW)
-    
-    def record_audio(self, duration: int = RECORDING_DURATION) -> Optional[str]:
-        """
-        Record audio from the default microphone and save it as a WAV file.
-        """
-        try:
-            logger.info(f"Recording for {duration} seconds...")
+        # Debounce
+        time.sleep(0.05)
+        
+        # Confirm button is still pressed
+        if button.value() == 0:
+            print("\n🎤 RECORDING...")
+            print(f"   Speak your question ({RECORD_SECONDS} seconds)")
+            
             # Record audio
-            recording = sd.rec(
-                int(duration * AUDIO_SAMPLE_RATE),
-                samplerate=AUDIO_SAMPLE_RATE,
-                channels=1,
-                dtype='int16'
-            )
-            sd.wait()  # Wait for recording to complete
-
-            # Save the recording to a WAV file
-            write_wav(TEMP_RECORDING_PATH, AUDIO_SAMPLE_RATE, recording)
-            logger.info(f"Audio recorded and saved to {TEMP_RECORDING_PATH}")
-            return TEMP_RECORDING_PATH
-        except Exception as e:
-            logger.error(f"Audio recording failed: {e}")
-            return None
-    
-    def send_audio_to_server(self, audio_file_path: str) -> Optional[str]:
-        """
-        Send an audio file to the server and save the returned audio response.
-        """
-        try:
-            # The endpoint from the FastAPI server
-            url = f"{self.server_url}/analyze-screen/"
-            logger.info(f"Sending audio to server: {url}")
-
-            with open(audio_file_path, 'rb') as audio_file:
-                files = {'audio_file': (os.path.basename(audio_file_path), audio_file, 'audio/wav')}
-                
-                response = requests.post(url, files=files, timeout=30, stream=True)
+            start_time = time.ticks_ms()
+            bytes_read = i2s_mic.readinto(audio_buffer)
+            record_time = time.ticks_diff(time.ticks_ms(), start_time) / 1000.0
+            
+            print(f"✅ Recording complete ({record_time:.2f}s)")
+            print(f"   Bytes recorded: {bytes_read}")
+            
+            # Check audio levels
+            min_val = min(audio_buffer)
+            max_val = max(audio_buffer)
+            spread = max_val - min_val
+            print(f"   Audio level: {spread}")
+            
+            if spread < 100:
+                print("   ⚠️  Very quiet - speak louder!")
+            
+            # Send to server
+            print("\n📤 Sending to server...")
+            
+            # Build URL with query parameter
+            server_url = f"http://{SERVER_IP}:{SERVER_PORT}/analyze-screen/?use_capture_card={'true' if USE_CAPTURE_CARD else 'false'}"
+            print(f"   URL: {server_url}")
+            print(f"   Mode: {'Capture Card' if USE_CAPTURE_CARD else 'Screen Screenshot'}")
+            
+            # Use memoryview to access array buffer directly without copying
+            # This is much more memory efficient
+            try:
+                # Try to get raw bytes directly from buffer
+                audio_bytes = bytes(memoryview(audio_buffer))
+            except:
+                # Fallback: convert in smaller chunks if memoryview doesn't work
+                print("   Converting audio in chunks...")
+                chunk_size = 512
+                chunks = []
+                for i in range(0, len(audio_buffer), chunk_size):
+                    chunk = audio_buffer[i:i+chunk_size]
+                    chunk_bytes = struct.pack(f'{len(chunk)}h', *chunk)
+                    chunks.append(chunk_bytes)
+                audio_bytes = b''.join(chunks)
+            
+            headers = {
+                'Content-Type': 'application/octet-stream',
+                'X-Sample-Rate': str(SAMPLE_RATE),
+                'X-Bits-Per-Sample': str(BITS_PER_SAMPLE),
+                'X-Channels': '1'
+            }
+            
+            try:
+                response = urequests.post(
+                    server_url,
+                    data=audio_bytes,
+                    headers=headers,
+                    timeout=30  # Longer timeout for processing
+                )
                 
                 if response.status_code == 200:
-                    logger.info("Successfully received audio response from server.")
-                    # Write the streaming audio response to a file
-                    with open(TEMP_RESPONSE_PATH, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=1024):
-                            f.write(chunk)
-                    logger.info(f"Response saved to {TEMP_RESPONSE_PATH}")
-                    return TEMP_RESPONSE_PATH
-                else:
-                    logger.error(f"Server error: {response.status_code} - {response.text}")
-                    return None
+                    print(f"✅ Response received!")
+                    print(f"   Size: {len(response.content)} bytes")
                     
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error communicating with server: {e}")
-            return None
-    
-    def process_server_response(self, response_audio_path: str) -> bool:
-        """
-        Play the audio file received from the server.
-        """
-        if not os.path.exists(response_audio_path):
-            logger.error("Response audio file not found.")
-            return False
+                    # Convert response to audio array
+                    received_audio = array.array('h')
+                    
+                    for i in range(0, len(response.content), 2):
+                        if i + 1 < len(response.content):
+                            sample = int.from_bytes(
+                                response.content[i:i+2],
+                                'little',
+                                True
+                            )
+                            received_audio.append(sample)
+                    
+                    duration = len(received_audio) / SAMPLE_RATE
+                    print(f"   Duration: {duration:.2f}s")
+                    
+                    # Play response
+                    print("\n🔊 Playing response...")
+                    
+                    if len(received_audio) > 0:
+                        i2s_amp.write(received_audio)
+                        print("✅ Playback complete!")
+                    else:
+                        print("❌ No audio data received")
+                
+                else:
+                    print(f"❌ Server error: {response.status_code}")
+                    if len(response.text) > 0:
+                        print(f"   {response.text[:200]}")
+                
+                response.close()
+                
+            except Exception as e:
+                print(f"❌ Communication error: {e}")
             
-        try:
-            logger.info(f"Playing response audio: {response_audio_path}")
-            # Use mpg123, a command-line MP3 player, to play the response
-            os.system(f"mpg123 -q {response_audio_path}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to play audio response: {e}")
-            return False
-    
-    def check_server_health(self) -> bool:
-        """
-        Check if the server is reachable by pinging its root URL.
-        """
-        try:
-            # The root URL of our FastAPI server serves as a simple health check
-            url = f"{self.server_url}/"
-            response = requests.get(url, timeout=5)
-            return response.status_code == 200
-        except requests.exceptions.RequestException:
-            logger.error(f"Server at {self.server_url} is not reachable.")
-            return False
-    
-    def cleanup(self):
-        """Clean up temporary audio files."""
-        for path in [TEMP_RECORDING_PATH, TEMP_RESPONSE_PATH]:
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError as e:
-                    logger.warning(f"Could not clean up file {path}: {e}")
-
-    def run_voice_command_cycle(self):
-        """
-        Run a complete voice command cycle: record -> send -> process response.
-        """
-        self.processing = True
-        self.set_led_status(True) # LED ON: indicates processing
-        
-        try:
-            if not self.check_server_health():
-                return
+            # Wait for button release
+            while button.value() == 0:
+                time.sleep(0.01)
             
-            # 1. Record audio
-            recorded_file = self.record_audio()
-            if not recorded_file:
-                return
+            print("\n" + "=" * 50)
+            print("Ready for next question. Press button to ask.")
+            print("=" * 50)
 
-            # 2. Send to server and get audio response back
-            response_file = self.send_audio_to_server(recorded_file)
-            if not response_file:
-                return
-
-            # 3. Play the server's audio response
-            self.process_server_response(response_file)
-            
-        finally:
-            self.processing = False
-            self.set_led_status(False) # LED OFF: cycle finished
-            self.cleanup()
-            logger.info("Cycle finished. Ready for next command.")
+except KeyboardInterrupt:
+    print("\n\n⚠️  Interrupted by user")
     
-    def run_continuous_mode(self):
-        """Run the controller in continuous mode, waiting for button presses."""
-        if not GPIO_AVAILABLE:
-            logger.error("GPIO not available - cannot run in continuous mode.")
-            return
-        
-        logger.info("Starting continuous mode. Press the button to start recording.")
-        try:
-            while True:
-                if self.button_pressed:
-                    self.button_pressed = False # Reset the flag
-                    self.run_voice_command_cycle()
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            logger.info("Continuous mode interrupted.")
-        finally:
-            self.cleanup_gpio()
+except Exception as e:
+    print(f"\n❌ Error: {e}")
+    import sys
+    sys.print_exception(e)
     
-    def cleanup_gpio(self):
-        """Clean up GPIO resources."""
-        if GPIO_AVAILABLE:
-            GPIO.cleanup()
-            logger.info("GPIO cleanup complete.")
-
-def main():
-    controller = PiAudioController()
-    
-    # Default to continuous mode if GPIO is available
-    if GPIO_AVAILABLE:
-        controller.run_continuous_mode()
-    else:
-        # Fallback to a single run for testing without hardware
-        logger.info("Running a single cycle (no GPIO detected).")
-        controller.run_voice_command_cycle()
-
-if __name__ == "__main__":
-    main()
+finally:
+    # Clean up
+    i2s_mic.deinit()
+    i2s_amp.deinit()
+    print("\nI2S devices deinitialized")
+    print("Goodbye!")
