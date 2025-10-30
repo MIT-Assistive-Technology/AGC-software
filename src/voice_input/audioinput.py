@@ -7,9 +7,40 @@ import requests
 import os
 import zipfile
 
+def get_default_device_info():
+    p = pyAudio.PyAudio()
+    print(f"Default Input: {p.get_default_input_device_info()}")
+    print(f"Default Output: {p.get_default_input_device_info()}")
+    p.terminate()
 
+def get_input_devices():
+    p = pyAudio.PyAudio()
+    device_count = p.get_device_count()
+    print("Recognized Input Devices:")
 
-def record(output_filename):
+    for i in range(device_count):
+        device_info = p.get_device_info_by_index(i)
+
+        if device_info.get("maxInputChannels") > 0:
+            device_name = device_info.get("name")
+            print(f"Index: {i} - Name: {device_name}")
+
+    p.terminate()
+
+def get_output_devices():
+    p = pyAudio.PyAudio()
+    device_count = p.get_device_count()
+    print("Recognized Output Devices")
+
+    for i in range(device_count):
+        device_info = p.get_device_info_by_index(i)
+
+        if device_info.get("maxOutputChannels") > 0:
+            device_name = device_info.get("name")
+            print(f"Index: {i} - Name: {device_name}")
+
+    p.terminate()
+def record(output_filename, input_device_index=None):
     CHUNK = 1024
     FORMAT = pyaudio.paInt16
     CHANNELS = 1
@@ -23,7 +54,8 @@ def record(output_filename):
                     channels = CHANNELS,
                     rate = RATE,
                     input = True,
-                    frames_per_buffer = CHUNK)
+                    frames_per_buffer = CHUNK,
+                    input_device_index = input_device_index)
     print("Recording....")
     frames = []
     for i in range(0, int(RATE/CHUNK * DURATION)):
@@ -60,14 +92,15 @@ def package_files(files_to_zip, zip_filename):
     return zip_filename
 
 
-def play(file):
+def play(file, output_device_index=None):
     CHUNK = 1024
     wf = wave.open(file, "rb")
     p = pyaudio.PyAudio()
     stream = p.open(format = p.get_format_from_width(wf.getsampwidth()),
                     channels = wf.getnchannels(),
                     rate = wf.getframerate(),
-                    output = True)
+                    output = True,
+                    output_device_index = output_device_index)
 
     data = wf.readframes(CHUNK)
     while len(data) > 0:
