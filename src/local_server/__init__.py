@@ -4,7 +4,7 @@ This package hosts a local API surface for external devices to control
 and query the AGC application using FastAPI.
 """
 
-from .app import app
+from .main import app
 
 __all__ = ["app"]
 
