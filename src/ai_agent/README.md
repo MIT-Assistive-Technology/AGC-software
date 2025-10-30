@@ -1,7 +1,7 @@
 # AI Agent Component
 
-**Team Assignment**: 2-3 developers  
-**Estimated Time**: 4-5 weeks  
+**Team Assignment**: 2-3 developers
+**Estimated Time**: 4-5 weeks
 **Dependencies**: `openai`, `transformers`, `torch`, `opencv-python`
 
 ## Overview
@@ -163,13 +163,13 @@ def match_command_to_action(command: str, ui_elements: List[UIElement]) -> Comma
     # 1. Parse command intent and target
     intent = extract_intent(command)
     target = extract_target(command)
-    
+
     # 2. Find matching UI elements
     candidates = find_matching_elements(target, ui_elements)
-    
+
     # 3. Score and rank candidates
     best_match = rank_candidates(candidates, command)
-    
+
     # 4. Generate action
     return create_action(intent, best_match)
 ```
