@@ -3,6 +3,82 @@ import base64
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
+import re
+
+# Controller button to shorthand mapping
+# This dictionary maps long-form controller button names to their shorthand equivalents.
+# It is used to normalize model output and provide a consistent interface for controller inputs.
+CONTROLLER_MAP = {
+    "D-Pad Up": "DU",
+    "D-Pad Down": "DD",
+    "D-Pad Left": "DL",
+    "D-Pad Right": "DR",
+    "Left Stick": "LS",
+    "Right Stick": "RS",
+    "Left Stick Click": "L3",
+    "Right Stick Click": "R3",
+    "A": "A",
+    "B": "B",
+    "X": "X",
+    "Y": "Y",
+    "Cross": "X",
+    "Circle": "O",
+    "Square": "[]",
+    "Triangle": "Δ",
+    "Left Bumper": "LB",
+    "Right Bumper": "RB",
+    "Left Trigger": "LT",
+    "Right Trigger": "RT",
+    "Start": "Start",
+    "Select": "Select",
+    "Menu": "Menu",
+    "Options": "Options",
+    "Back": "Back",
+    "Home": "Home"
+}
+
+def _build_mapping_instructions():
+    """Build a string describing the controller shorthand mapping."""
+    parts = [f"{name}={code}" for name, code in CONTROLLER_MAP.items()]
+    return "Controller shorthand mapping: " + "; ".join(parts)
+
+def _should_apply_controller_normalization(user_text):
+    """Heuristic intent detection for control input requests.
+    Returns True if the prompt asks what to press, which buttons, or to execute an action.
+    """
+    if not user_text:
+        return False
+    t = user_text.lower()
+    keywords = [
+        "press", "button", "buttons", "input", "inputs", "execute", "do", "perform", "combo",
+        "attack", "use", "open", "jump", "shoot", "block", "dash", "interact", "pickup", "pick up",
+        "equip", "reload", "map", "inventory", "ability", "skill"
+    ]
+    if any(k in t for k in keywords):
+        return True
+    patterns = [
+        r"what\s+do\s+i\s+press",
+        r"what\s+should\s+i\s+press",
+        r"which\s+button",
+        r"how\s+(do|to).*\b(execute|perform|do)\b",
+    ]
+    return any(re.search(p, t) for p in patterns)
+
+def _normalize_controller_output(text):
+    """Extract and normalize controller shorthand symbols from model output.
+    - Replaces known long-form button names with their shorthand.
+    - Filters output to only recognized shorthand tokens and joins them with spaces.
+    """
+    if not text:
+        return ""
+    norm = text
+    for long, short in CONTROLLER_MAP.items():
+        norm = re.sub(rf"\b{re.escape(long)}\b", short, norm, flags=re.IGNORECASE)
+    allowed = set(CONTROLLER_MAP.values())
+    tokens = [t for t in re.split(r"[^A-Za-z0-9Δ\[\]]+", norm) if t]
+    # Keep tokens that exactly match allowed shorthands (case-sensitive)
+    result = [t for t in tokens if t in allowed]
+    return " ".join(result)
 
 def encode_image(image_path):
     """Encode image to base64 string."""
@@ -59,9 +135,15 @@ def main():
 
     # Initialize conversation history
     conversation_history = []
-    #TODO: change system message so that it says "only the number" vs "only the number and any necessary units". Why little to no difference?
-    #TODO: actually, there is a difference, but only sometimes. investigate if this is predictable or not, and if not, how can we standardize it?
-    system_message = {"role": "system", "content": "You are a helpful assistant with vision capabilities. You can analyze images and answer questions about them. IMPORTANT: For numeric answers, provide only the number and necessary units without explanation. Keep all responses extremely short."}
+    system_message = {
+        "role": "system",
+        "content": (
+            "You are a helpful assistant with vision capabilities. You can analyze images and answer questions about them. "
+            "IMPORTANT: For numeric answers, provide only the number and necessary units without explanation. Keep all responses extremely short. "
+            "When an image of a game UI is provided and the user asks what to press or how to execute an in-game task, respond with ONLY the controller shorthand symbols separated by single spaces, in the exact order to press, with no extra text. "
+            + _build_mapping_instructions()
+        )
+    }
 
     print("AI Assistant with Vision (type 'exit' to quit)")
     print("Usage:")
@@ -189,6 +271,12 @@ def main():
 
             # Print the response
             ai_response = response.choices[0].message.content
+            # If an image was provided and the prompt is asking for inputs or execution,
+            # normalize output to only controller shorthands when applicable
+            if image_path and _should_apply_controller_normalization(text_prompt):
+                normalized = _normalize_controller_output(ai_response)
+                if normalized:
+                    ai_response = normalized
             print("\nAI:", ai_response)
 
             # Add to conversation history
