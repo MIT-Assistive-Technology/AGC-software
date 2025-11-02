@@ -1,355 +1,268 @@
-#!/usr/bin/env python3
-"""
-Raspberry Pi Zero W Audio Controller Script
-
-This script runs on a Raspberry Pi Zero W and provides voice control
-functionality for our controller by:
-1. Recording audio from microphone
-2. Sending audio to the local server
-3. Processing the response using voice response functions
-
-Hardware Requirements:
-- Raspberry Pi Zero W
-- USB microphone or audio input device
-- Network connection to our local server
-
-Dependencies:
-- requests (for HTTP communication)
-"""
-
-import os
-import sys
+import machine
 import time
-import requests
-import logging
-from typing import Optional, Dict, Any
+import array
+import network
+import urequests
+import struct
+from machine import I2S, Pin
 
+# --- CONFIGURATION ---
+# Update these with your network details
+WIFI_SSID = "MIT"
+WIFI_PASSWORD = "$$4b4P(LwG"
+
+# Update with your computer's IP address (find using ipconfig/ifconfig)
+# ipconfig getifaddr en0
+# Make sure to use port 8000
+SERVER_IP = "10.29.151.42"
+SERVER_PORT = "8000"
+
+# Choose capture mode:
+# False = Screen screenshot (captures entire screen on server)
+# True = Capture card (captures from video capture device)
+USE_CAPTURE_CARD = False
+
+# --- Pin Definitions ---
+# Microphone (SPH0645LM4H) - I2S 0
+MIC_BCLK_PIN = 9
+MIC_WS_PIN = 10
+MIC_SD_PIN = 11
+
+# Amplifier (MAX98357) - I2S 1
+AMP_BCLK_PIN = 12
+AMP_WS_PIN = 13
+AMP_SD_PIN = 14
+
+# Button
+BUTTON_PIN_NUM = 15  # GP15
+
+# --- Audio Configuration ---
+SAMPLE_RATE = 16000
+BITS_PER_SAMPLE = 16
+RECORD_SECONDS = 3  # Record for 3 seconds
+NUM_SAMPLES = SAMPLE_RATE * RECORD_SECONDS
+
+print("=" * 50)
+print("Gaming Assistant - Audio Control")
+print("=" * 50)
+print(f"Capture Mode: {'Capture Card' if USE_CAPTURE_CARD else 'Screen Screenshot'}")
+print()
+
+def connect_wifi():
+    """Connect to WiFi network."""
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    
+    if wlan.isconnected():
+        print("✅ Already connected to WiFi")
+        print(f"   IP: {wlan.ifconfig()[0]}")
+        return wlan
+    
+    print(f"📡 Connecting to: {WIFI_SSID}")
+    wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+    
+    max_wait = 10
+    while max_wait > 0:
+        if wlan.isconnected():
+            break
+        max_wait -= 1
+        print("   Waiting for connection...")
+        time.sleep(1)
+    
+    if wlan.isconnected():
+        print("✅ WiFi connected!")
+        print(f"   IP: {wlan.ifconfig()[0]}")
+        return wlan
+    else:
+        print("❌ WiFi connection failed!")
+        return None
+
+# Connect to WiFi
+wlan = connect_wifi()
+if not wlan:
+    print("Cannot proceed without WiFi. Exiting.")
+    raise SystemExit
+
+print()
+
+# --- Initialize Microphone ---
 try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except ImportError:
-    GPIO_AVAILABLE = False
-    print("Warning: RPi.GPIO not available. Button functionality will be disabled.")
+    i2s_mic = I2S(
+        0,
+        sck=Pin(MIC_BCLK_PIN),
+        ws=Pin(MIC_WS_PIN),
+        sd=Pin(MIC_SD_PIN),
+        mode=I2S.RX,
+        bits=BITS_PER_SAMPLE,
+        format=I2S.MONO,
+        rate=SAMPLE_RATE,
+        ibuf=4096
+    )
+    print("✅ Microphone initialized")
+except Exception as e:
+    print(f"❌ Failed to initialize microphone: {e}")
+    raise SystemExit
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# --- Initialize Amplifier ---
+try:
+    i2s_amp = I2S(
+        1,
+        sck=Pin(AMP_BCLK_PIN),
+        ws=Pin(AMP_WS_PIN),
+        sd=Pin(AMP_SD_PIN),
+        mode=I2S.TX,
+        bits=BITS_PER_SAMPLE,
+        format=I2S.MONO,
+        rate=SAMPLE_RATE,
+        ibuf=4096
+    )
+    print("✅ Amplifier initialized")
+except Exception as e:
+    print(f"❌ Failed to initialize amplifier: {e}")
+    i2s_mic.deinit()
+    raise SystemExit
 
-# Configuration
-SERVER_HOST = "192.168.1.100"  
-SERVER_PORT = 8000
-AUDIO_SAMPLE_RATE = 44100
-AUDIO_CHANNELS = 1
-AUDIO_CHUNK_SIZE = 1024
-RECORDING_DURATION = 5  # seconds
-MAX_RETRIES = 3
+# --- Initialize Button ---
+button = Pin(BUTTON_PIN_NUM, Pin.IN, Pin.PULL_UP)
 
-# GPIO Configuration
-BUTTON_PIN = 18  # GPIO pin for the push button
-LED_PIN = 24     # GPIO pin for status LED
-BUTTON_DEBOUNCE_TIME = 200  # milliseconds
+print()
 
+# Create audio buffer
+audio_buffer = array.array('h', (0 for _ in range(NUM_SAMPLES)))
 
-class PiAudioController:
-    """Main controller class for Raspberry Pi audio operations."""
-    
-    def __init__(self, server_host: str = SERVER_HOST, server_port: int = SERVER_PORT):
-        self.server_url = f"http://{server_host}:{server_port}"
-        self.audio_file_path = None
-        self.button_pressed = False
-        self.processing = False
-        self.gpio_setup = False
+print("=" * 50)
+print("🎮 Ready! Press the button to ask about the game.")
+print("=" * 50)
+print()
+try:
+    while True:
+        # Wait for button press
+        # button.value() is 1 (HIGH) when not pressed (PULL_UP)
+        # and 0 (LOW) when pressed
+        while button.value() == 1:
+            time.sleep(0.01)
         
-        # Setup GPIO if available
-        if GPIO_AVAILABLE:
-            self.setup_gpio()
-    
-    def setup_gpio(self):
-        """Setup GPIO pins for button and LED."""
-        try:
-            GPIO.setmode(GPIO.BCM)
+        # Debounce
+        time.sleep(0.05)
+        
+        # Confirm button is still pressed
+        if button.value() == 0:
+            print("\n🎤 RECORDING...")
+            print(f"   Speak your question ({RECORD_SECONDS} seconds)")
             
-            # Setup button pin (with pull-up resistor)
-            GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            # Record audio
+            start_time = time.ticks_ms()
+            bytes_read = i2s_mic.readinto(audio_buffer)
+            record_time = time.ticks_diff(time.ticks_ms(), start_time) / 1000.0
             
-            # Setup LED pin
-            GPIO.setup(LED_PIN, GPIO.OUT)
-            GPIO.output(LED_PIN, GPIO.LOW)
+            print(f"✅ Recording complete ({record_time:.2f}s)")
+            print(f"   Bytes recorded: {bytes_read}")
             
-            # Add event detection for button press
-            GPIO.add_event_detect(
-                BUTTON_PIN, 
-                GPIO.FALLING, 
-                callback=self.button_callback,
-                bouncetime=BUTTON_DEBOUNCE_TIME
-            )
+            # Check audio levels
+            min_val = min(audio_buffer)
+            max_val = max(audio_buffer)
+            spread = max_val - min_val
+            print(f"   Audio level: {spread}")
             
-            self.gpio_setup = True
-            logger.info(f"GPIO setup complete - Button: GPIO{BUTTON_PIN}, LED: GPIO{LED_PIN}")
+            if spread < 100:
+                print("   ⚠️  Very quiet - speak louder!")
             
-        except Exception as e:
-            logger.error(f"GPIO setup failed: {str(e)}")
-            self.gpio_setup = False
-    
-    def button_callback(self, channel):
-        """Callback function for button press events."""
-        if not self.processing:
-            logger.info("Button pressed - starting voice command cycle")
-            self.button_pressed = True
-            self.set_led_status(True)  # Turn on LED to indicate processing
-        else:
-            logger.info("Button pressed but already processing - ignoring")
-    
-    def set_led_status(self, on: bool):
-        """Control the status LED."""
-        if GPIO_AVAILABLE and self.gpio_setup:
+            # Send to server
+            print("\n📤 Sending to server...")
+            
+            # Build URL with query parameter
+            server_url = f"http://{SERVER_IP}:{SERVER_PORT}/analyze-screen/?use_capture_card={'true' if USE_CAPTURE_CARD else 'false'}"
+            print(f"   URL: {server_url}")
+            print(f"   Mode: {'Capture Card' if USE_CAPTURE_CARD else 'Screen Screenshot'}")
+            
+            # Use memoryview to access array buffer directly without copying
+            # This is much more memory efficient
             try:
-                GPIO.output(LED_PIN, GPIO.HIGH if on else GPIO.LOW)
-            except Exception as e:
-                logger.error(f"LED control error: {str(e)}")
-    
-    def wait_for_button_press(self) -> bool:
-        """Wait for button press or return immediately if already pressed."""
-        if self.button_pressed:
-            self.button_pressed = False
-            return True
-        
-        logger.info("Waiting for button press...")
-        while not self.button_pressed: # we might change this to a timeout
-            time.sleep(0.1)
-        
-        self.button_pressed = False
-        return True
-        
-    def record_audio(self, duration: int = RECORDING_DURATION) -> Optional[str]:
-        """
-        Record audio from microphone and save to temporary file.
-        Should be calling the voice_input module
-        Args:
-            duration: Recording duration in seconds
+                # Try to get raw bytes directly from buffer
+                audio_bytes = bytes(memoryview(audio_buffer))
+            except:
+                # Fallback: convert in smaller chunks if memoryview doesn't work
+                print("   Converting audio in chunks...")
+                chunk_size = 512
+                chunks = []
+                for i in range(0, len(audio_buffer), chunk_size):
+                    chunk = audio_buffer[i:i+chunk_size]
+                    chunk_bytes = struct.pack(f'{len(chunk)}h', *chunk)
+                    chunks.append(chunk_bytes)
+                audio_bytes = b''.join(chunks)
             
-        Returns:
-            Path to recorded audio file, or None if failed
-        """
-        raise NotImplementedError("should be calling the voice_input module")
-    
-    def send_audio_to_server(self, audio_file_path: str) -> Optional[Dict[str, Any]]:
-        """
-        Send audio file to the local server for processing.
-       
-        Args:
-            audio_file_path: Path to the audio file
+            headers = {
+                'Content-Type': 'application/octet-stream',
+                'X-Sample-Rate': str(SAMPLE_RATE),
+                'X-Bits-Per-Sample': str(BITS_PER_SAMPLE),
+                'X-Channels': '1'
+            }
             
-        Returns:
-            Server response as dictionary (or a voice file if we move the TTS to the server side), or None if failed 
-        """
-        try:
-            url = f"{self.server_url}/audio/process"
-            logger.info(f"Sending audio to server: {url}")
-            with open(audio_file_path, 'rb') as audio_file:
-                files = {'audio_file': audio_file}
-                
-                response = requests.post(
-                    url,
-                    files=files,
-                    timeout=30
+            try:
+                response = urequests.post(
+                    server_url,
+                    data=audio_bytes,
+                    headers=headers,
+                    timeout=30  # Longer timeout for processing
                 )
                 
                 if response.status_code == 200:
-                    result = response.json()
-                    logger.info("Successfully received response from server")
-                    return result
-                else:
-                    logger.error(f"Server error: {response.status_code} - {response.text}")
-                    return None
+                    print(f"✅ Response received!")
+                    print(f"   Size: {len(response.content)} bytes")
                     
-        except requests.exceptions.ConnectionError:
-            logger.error(f"Could not connect to server at {self.server_url}")
-            return None
-        except requests.exceptions.Timeout:
-            logger.error("Request timed out")
-            return None
-        except Exception as e:
-            logger.error(f"Error sending audio to server: {str(e)}")
-            return None
-    
-    def process_server_response(self, response: Dict[str, Any]) -> bool:
-        """
-        Process the server response using voice response module.
-        
-        Args:
-            response: Server response dictionary
-            
-        Returns:
-            True if processing successful, False otherwise
-        """
-        raise NotImplementedError("should be calling the voice_response module")
-    
-    
-    def check_server_health(self) -> bool:
-        """
-        Check if the server is healthy and reachable.
-        
-        Returns:
-            True if server is healthy, False otherwise
-        """
-        try:
-            url = f"{self.server_url}/health"
-            response = requests.get(url, timeout=5)
-            
-            if response.status_code == 200:
-                health_data = response.json()
-                logger.info(f"Server health check passed: {health_data.get('status', 'unknown')}")
-                return True
-            else:
-                logger.error(f"Server health check failed: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Server health check error: {str(e)}")
-            return False
-    
-    def cleanup(self):
-        """Clean up temporary files."""
-        if self.audio_file_path and os.path.exists(self.audio_file_path):
-            try:
-                os.unlink(self.audio_file_path)
-                logger.info("Cleaned up temporary audio file")
-            except Exception as e:
-                logger.warning(f"Could not clean up audio file: {str(e)}")
-    
-    def run_voice_command_cycle(self) -> bool:
-        """
-        Run a complete voice command cycle: record -> send -> process.
-        
-        Returns:
-            True if cycle completed successfully, False otherwise
-        """
-        try:
-            self.processing = True
-            logger.info("Starting voice command cycle...")
-            
-            # Check server health first
-            if not self.check_server_health():
-                logger.error("Server is not healthy, aborting cycle")
-                return False
-            
-            # Record audio
-            audio_file = self.record_audio()
-            if not audio_file:
-                logger.error("Failed to record audio")
-                return False
-            
-            # Send to server
-            response = self.send_audio_to_server(audio_file)
-            if not response:
-                logger.error("Failed to get response from server")
-                return False
-            
-            # Process response
-            success = self.process_server_response(response)
-            if not success:
-                logger.error("Failed to process server response")
-                return False
-            
-            logger.info("Voice command cycle completed successfully")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error in voice command cycle: {str(e)}")
-            return False
-        finally:
-            self.processing = False
-            self.set_led_status(False)  # Turn off LED when done
-            self.cleanup()
-    
-    def run_continuous_mode(self):
-        """Run the controller in continuous mode, waiting for button presses."""
-        logger.info("Starting continuous mode - waiting for button presses...")
-        
-        if not GPIO_AVAILABLE:
-            logger.error("GPIO not available - cannot run in continuous mode")
-            return
-        
-        try:
-            while True:
-                # Wait for button press
-                if self.wait_for_button_press():
-                    # Run voice command cycle
-                    success = self.run_voice_command_cycle()
+                    # Convert response to audio array
+                    received_audio = array.array('h')
                     
-                    if success:
-                        logger.info("Voice command completed successfully")
+                    for i in range(0, len(response.content), 2):
+                        if i + 1 < len(response.content):
+                            sample = int.from_bytes(
+                                response.content[i:i+2],
+                                'little',
+                                True
+                            )
+                            received_audio.append(sample)
+                    
+                    duration = len(received_audio) / SAMPLE_RATE
+                    print(f"   Duration: {duration:.2f}s")
+                    
+                    # Play response
+                    print("\n🔊 Playing response...")
+                    
+                    if len(received_audio) > 0:
+                        i2s_amp.write(received_audio)
+                        print("✅ Playback complete!")
                     else:
-                        logger.error("Voice command failed")
-                    
-                    # Brief pause before ready for next command
-                    time.sleep(1)
-                    
-        except KeyboardInterrupt:
-            logger.info("Continuous mode interrupted by user")
-        except Exception as e:
-            logger.error(f"Error in continuous mode: {str(e)}")
-        finally:
-            self.cleanup_gpio()
-    
-    def cleanup_gpio(self):
-        """Clean up GPIO resources."""
-        if GPIO_AVAILABLE and self.gpio_setup:
-            try:
-                GPIO.cleanup()
-                logger.info("GPIO cleanup completed")
+                        print("❌ No audio data received")
+                
+                else:
+                    print(f"❌ Server error: {response.status_code}")
+                    if len(response.text) > 0:
+                        print(f"   {response.text[:200]}")
+                
+                response.close()
+                
             except Exception as e:
-                logger.error(f"GPIO cleanup error: {str(e)}")
-
-
-def main():
-    """Main function to run the Pi audio controller."""
-    logger.info("Starting Raspberry Pi Audio Controller")
-    
-    # Check if we're running on a Pi (optional check)
-    try:
-        with open('/proc/cpuinfo', 'r') as f:
-            cpuinfo = f.read()
-            if 'BCM2835' in cpuinfo or 'BCM2836' in cpuinfo or 'BCM2837' in cpuinfo:
-                logger.info("Running on Raspberry Pi")
-            else:
-                logger.warning("Not running on Raspberry Pi - some features may not work")
-    except:
-        logger.warning("Could not detect Raspberry Pi hardware")
-    
-    # Initialize controller
-    controller = PiAudioController()
-    
-    try:
-        # Check command line arguments for mode
-        if len(sys.argv) > 1 and sys.argv[1] == "--continuous":
-            # Run in continuous mode (wait for button presses)
-            controller.run_continuous_mode()
-        else:
-            # Run single voice command cycle (for testing)
-            logger.info("Running single voice command cycle (use --continuous for button mode)")
-            success = controller.run_voice_command_cycle()
+                print(f"❌ Communication error: {e}")
             
-            if success:
-                logger.info("Voice command cycle completed successfully")
-                sys.exit(0)
-            else:
-                logger.error("Voice command cycle failed")
-                sys.exit(1)
+            # Wait for button release
+            while button.value() == 0:
+                time.sleep(0.01)
             
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user")
-        controller.cleanup_gpio()
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        controller.cleanup_gpio()
-        sys.exit(1)
+            print("\n" + "=" * 50)
+            print("Ready for next question. Press button to ask.")
+            print("=" * 50)
 
-
-if __name__ == "__main__":
-    main()
+except KeyboardInterrupt:
+    print("\n\n⚠️  Interrupted by user")
+    
+except Exception as e:
+    print(f"\n❌ Error: {e}")
+    import sys
+    sys.print_exception(e)
+    
+finally:
+    # Clean up
+    i2s_mic.deinit()
+    i2s_amp.deinit()
+    print("\nI2S devices deinitialized")
+    print("Goodbye!")
