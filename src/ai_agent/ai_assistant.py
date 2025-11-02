@@ -74,7 +74,7 @@ def _normalize_controller_output(text):
     norm = text
     for long, short in CONTROLLER_MAP.items():
         norm = re.sub(rf"\b{re.escape(long)}\b", short, norm, flags=re.IGNORECASE)
-    allowed = set(CONTROLLER_MAP.values())
+    allowed = set[str](CONTROLLER_MAP.values())
     tokens = [t for t in re.split(r"[^A-Za-z0-9Δ\[\]]+", norm) if t]
     # Keep tokens that exactly match allowed shorthands (case-sensitive)
     result = [t for t in tokens if t in allowed]
