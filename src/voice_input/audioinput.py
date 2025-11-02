@@ -24,7 +24,7 @@ def get_input_devices():
         if device_info.get("maxInputChannels") > 0:
             device_name = device_info.get("name")
             print(f"Index: {i} - Name: {device_name}")
-
+# hi
     p.terminate()
 
 def get_output_devices():
