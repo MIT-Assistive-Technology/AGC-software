@@ -8,13 +8,13 @@ from machine import I2S, Pin
 
 # --- CONFIGURATION ---
 # Update these with your network details
-WIFI_SSID = "MIT"
-WIFI_PASSWORD = "$$4b4P(LwG"
+WIFI_SSID = ""
+WIFI_PASSWORD = ""
 
 # Update with your computer's IP address (find using ipconfig/ifconfig)
 # ipconfig getifaddr en0
 # Make sure to use port 8000
-SERVER_IP = "10.29.151.42"
+SERVER_IP = ""
 SERVER_PORT = "8000"
 
 # Choose capture mode:
