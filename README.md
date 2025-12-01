@@ -222,7 +222,7 @@ python -m pytest tests/integration/
 # Our Team:
 - Aurora Huang
 - Rachel Yeung
-- Matthew
+- Matthew Medina
 - Wade Rogers
 - Erik Xie
 - Mellanie Rodriguez
