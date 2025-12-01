@@ -377,4 +377,4 @@ async def test_screenshot():
     
     return results
 # ipconfig getifaddr en0
-# To run: uvicorn main:app --reload --host 10.31.183.40 --port 8000
+# To run: uvicorn main:app --reload --host hostIP --port 8000
