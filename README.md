@@ -220,7 +220,7 @@ python -m pytest tests/unit/voice_input/
 python -m pytest tests/integration/
 ```
 # Our Team:
-- Aurora
+- Aurora Huang
 - Rachel Yeung
 - Matthew
 - Wade Rogers
