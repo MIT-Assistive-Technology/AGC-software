@@ -1,3 +1,4 @@
+import sys
 import os
 import base64
 import struct
@@ -13,6 +14,12 @@ from PIL import ImageGrab, Image
 import platform
 import time
 import io
+
+sys.path.append(os.path.abspath(".."))
+#print("aaaaaaa" + str(os.path.abspath("../src")))
+from voice_response import tts_get_pcm
+
+# make it possible to import functions from other folders
 
 # Load environment vars
 load_dotenv(dotenv_path="../../.env")
@@ -254,22 +261,24 @@ async def analyze_screen(
         print("OpenAI text send+processing+receive time: " + str((time2-time1)))
 
         # Generate TTS audio
-        print("\nGenerating audio response...")
-        speech_response = client.audio.speech.create(
-            model="tts-1",
-            voice="alloy",
-            input=analysis_text,
-            response_format="pcm"  # Request PCM directly instead of MP3
-        )
+        # print("\nGenerating audio response...")
+        # speech_response = client.audio.speech.create(
+        #     model="tts-1",
+        #     voice="alloy",
+        #     input=analysis_text,
+        #     response_format="pcm"  # Request PCM directly instead of MP3
+        # )
+        pcm_data = tts_get_pcm(text=analysis_text)
         time3 = time.time()
-        print("OpenAI voice send+processing+receive time: " + str((time3-time2)))
+        print("Piper voice send+processing+receive time: " + str((time3-time2)))
         # Get PCM data directly from OpenAI
-        pcm_data = speech_response.content
+        #pcm_data = speech_response.content
         print(f"Generated PCM: {len(pcm_data)} bytes")
         
         # OpenAI returns PCM at 24kHz, 16-bit, mono by default
         # We need to resample to match the Pico's sample rate
-        openai_sample_rate = 24000
+        #openai_sample_rate = 24000
+        openai_sample_rate = 22050
         
         if openai_sample_rate != sample_rate:
             print(f"Resampling from {openai_sample_rate}Hz to {sample_rate}Hz...")
