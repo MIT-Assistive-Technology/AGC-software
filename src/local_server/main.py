@@ -1,3 +1,4 @@
+import sys
 import os
 import base64
 import struct
@@ -9,10 +10,17 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import cv2
 import numpy as np
-from PIL import ImageGrab
+from PIL import ImageGrab, Image
 import platform
-from ..ai_agent.ai_assistant import CONTROLLER_MAP, _build_mapping_instructions, _normalize_controller_output, _should_apply_controller_normalization
-from ..hardware.buttons import press_button
+import time
+import io
+
+sys.path.append(os.path.abspath(".."))
+#print("aaaaaaa" + str(os.path.abspath("../src")))
+from voice_response import tts_get_pcm
+
+# make it possible to import functions from other folders
+
 # Load environment vars
 load_dotenv(dotenv_path="../../.env")
 
@@ -20,6 +28,7 @@ load_dotenv(dotenv_path="../../.env")
 CAPTURE_CARD_INDEX = int(os.getenv("CAPTURE_CARD_INDEX", "0"))
 
 def list_video_devices():
+    """List all available video capture devices."""
     devices = []
     index = 0
     while True:
@@ -32,37 +41,46 @@ def list_video_devices():
         index += 1
     return devices
 
-def capture_from_capture_card(device_index: int = CAPTURE_CARD_INDEX) -> np.ndarray:
+def capture_from_capture_card(device_index: int = CAPTURE_CARD_INDEX):
     """
     Capture a frame from the specified capture card device.
+    Returns the frame as a numpy array, or None if capture fails.
     """
     cap = cv2.VideoCapture(device_index)
     
     if not cap.isOpened():
         raise Exception(f"Could not open video device {device_index}")
+    
     try:
         ret, frame = cap.read()
         if not ret:
-            raise Exception(f"Could not read frame from device {device_index}")
+            raise Exception(f"Could not read frame from video device {device_index}")
         return frame
     finally:
         cap.release()
 
-def capture_screen_screenshot() -> np.ndarray:
+def capture_screen_screenshot():
     """
     Capture a screenshot of the entire screen using PIL.
+    Returns the frame as a numpy array.
     """
     try:
+        # Capture the entire screen
         screenshot = ImageGrab.grab()
+        
+        # Convert PIL Image to numpy array (RGB)
         frame_rgb = np.array(screenshot)
+        
+        # Convert RGB to BGR for consistency with OpenCV
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        
         return frame_bgr
     except Exception as e:
         raise Exception(f"Failed to capture screenshot: {e}")
 
 def pcm_to_wav(pcm_data: bytes, sample_rate: int, bits_per_sample: int, channels: int) -> bytes:
     """
-    Convert raw PCM data to WAV format
+    Convert raw PCM data to WAV format for Whisper API using wave module.
     """
     wav_io = BytesIO()
     
@@ -76,34 +94,50 @@ def pcm_to_wav(pcm_data: bytes, sample_rate: int, bits_per_sample: int, channels
 
 def resample_audio(audio_data: np.ndarray, orig_rate: int, target_rate: int) -> np.ndarray:
     """
-    interpolate audio data from original sample rate to target sample rate.
+    Resample audio data from original sample rate to target sample rate.
+    Uses linear interpolation.
     """
     if orig_rate == target_rate:
         return audio_data
     
+    # Calculate the new length
     duration = len(audio_data) / orig_rate
     target_length = int(duration * target_rate)
     
+    # Create indices for interpolation
     orig_indices = np.linspace(0, len(audio_data) - 1, len(audio_data))
     target_indices = np.linspace(0, len(audio_data) - 1, target_length)
     
+    # Interpolate
     resampled = np.interp(target_indices, orig_indices, audio_data)
     
     return resampled.astype(audio_data.dtype)
 
 def mp3_to_pcm(mp3_data: bytes, target_sample_rate: int = 16000) -> bytes:
     """
-    Maybe implemented with ffmpeg later, it's annoying 
+    Convert MP3 data to raw PCM format for the Pico.
+    Returns 16-bit signed PCM audio at the target sample rate.
+    
+    Note: OpenAI TTS returns MP3. We decode it and convert to PCM.
+    This uses a simple approach without external dependencies.
     """
+    # Since we can't easily decode MP3 without ffmpeg/pydub,
+    # we'll request WAV format from OpenAI instead.
+    # This function is kept for compatibility but won't be used.
     raise NotImplementedError("MP3 decoding requires ffmpeg. Use WAV format instead.")
 
+# Initialize the FastAPI app
 app = FastAPI(
     title="Screen Analysis API",
     description="An API that analyzes a screenshot based on an audio command from Pico."
 )
 
-
-client = OpenAI()
+API_KEY = "insert API key"
+try:
+    client = OpenAI(api_key=API_KEY)
+except Exception as e:
+    print(f"Error initializing OpenAI client: {e}")
+    client = None
 
 @app.post("/analyze-screen/",
           summary="Analyze Screen with Audio Command from Pico",
@@ -126,7 +160,8 @@ async def analyze_screen(
         raise HTTPException(status_code=500, detail="OpenAI client not initialized. Check API key.")
     
     try:
-     
+        time0 = time.time()
+        # Get audio metadata from headers
         sample_rate = int(request.headers.get('X-Sample-Rate', 16000))
         bits_per_sample = int(request.headers.get('X-Bits-Per-Sample', 16))
         channels = int(request.headers.get('X-Channels', 1))
@@ -161,18 +196,31 @@ async def analyze_screen(
             if use_capture_card:
                 # Use capture card
                 frame = capture_from_capture_card()
+                print(f"  ✅ Captured from capture card (device {CAPTURE_CARD_INDEX})")
             else:
+                # Use screen screenshot
                 frame = capture_screen_screenshot()
+                print(f"  ✅ Captured screen screenshot")
             
+            # Convert to RGB and encode as PNG
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             success, png_bytes = cv2.imencode('.png', frame_rgb)
             if not success:
                 raise Exception("Failed to encode frame as PNG")
-            base64_image = base64.b64encode(png_bytes).decode('utf-8')
+            
+            # convert to jpeg and reduce image size
+            buf = io.BytesIO()
+            img = Image.open(io.BytesIO(png_bytes))
+            img.save(buf, format="JPEG", quality=70)  # quality 0-100
+            jpeg_bytes = buf.getvalue()
+            base64_image = base64.b64encode(jpeg_bytes).decode('utf-8')
+
+            #base64_image = base64.b64encode(png_bytes).decode('utf-8')
+            print("Image size: " + str(len(base64_image)))
             print(f"  Image size: {frame.shape[1]}x{frame.shape[0]}")
             
         except Exception as e:
-            if use_capture_card: # debug mode for capture card
+            if use_capture_card:
                 print(f"Capture card error: {e}")
                 available_devices = list_video_devices()
                 print(f"Available video devices: {available_devices}")
@@ -180,17 +228,16 @@ async def analyze_screen(
             else:
                 print(f"Screenshot error: {e}")
                 raise HTTPException(status_code=500, detail=f"Screenshot error: {e}")
-
-        print("\nAnalyzing image with LLM...")
+        time1 = time.time()
+        print("After receiving, before sending to OpenAI: " + str((time1-time0)))
+        # Analyze with GPT-4o
+        print("\nAnalyzing image with GPT-4.1 Nano...")
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1-nano", #gpt-4.1-nano
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant with vision capabilities. You can analyze images and answer questions about them. "
-            "IMPORTANT: For numeric answers, provide only the number and necessary units without explanation. Keep all responses extremely short. "
-            "When an image of a game UI is provided and the user asks what to press or how to execute an in-game task, respond with ONLY the controller shorthand symbols separated by single spaces, in the exact order to press, with no extra text. "
-            + _build_mapping_instructions()
+                    "content": "You are a gaming assistant that tells the user what's on the screen. Your answers should be shorter than 5 words."
                 },
                 {
                     "role": "user",
@@ -200,7 +247,7 @@ async def analyze_screen(
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/png;base64,{base64_image}",
-                                "detail": "low"  # changed to low 
+                                "detail": "low" 
                             },
                         },
                     ],
@@ -209,45 +256,50 @@ async def analyze_screen(
             max_tokens=300,
         )
         analysis_text = response.choices[0].message.content
-        print(f"Generated result: '{analysis_text}'")
+        print(f"Analysis result: '{analysis_text}'")
+        time2 = time.time()
+        print("OpenAI text send+processing+receive time: " + str((time2-time1)))
 
-        if _should_apply_controller_normalization(user_prompt): # we press buttons instead of reading a response
-            controller_output = _normalize_controller_output(analysis_text)
-            try:
-                press_button(controller_output)
-            except Exception as e:
-                print(f"Error pressing buttons: {e}")
-                raise HTTPException(status_code=500, detail=f"Error pressing buttons: {e}")
-            return Response( # this needs to be fixed 
-                content=analysis_text,
-                media_type="text/plain",
-            )
-
-        # TTS generation
-        print("\nGenerating audio response...")
-        speech_response = client.audio.speech.create(
-            model="tts-1",
-            voice="alloy",
-            input=analysis_text,
-            response_format="pcm"  # we need PCM directly instead of MP3
-        )
-        
-        pcm_data = speech_response.content
+        # Generate TTS audio
+        # print("\nGenerating audio response...")
+        # speech_response = client.audio.speech.create(
+        #     model="tts-1",
+        #     voice="alloy",
+        #     input=analysis_text,
+        #     response_format="pcm"  # Request PCM directly instead of MP3
+        # )
+        pcm_data = tts_get_pcm(text=analysis_text)
+        time3 = time.time()
+        print("Piper voice send+processing+receive time: " + str((time3-time2)))
+        # Get PCM data directly from OpenAI
+        #pcm_data = speech_response.content
         print(f"Generated PCM: {len(pcm_data)} bytes")
         
-        openai_sample_rate = 24000
-
+        # OpenAI returns PCM at 24kHz, 16-bit, mono by default
+        # We need to resample to match the Pico's sample rate
+        #openai_sample_rate = 24000
+        openai_sample_rate = 22050
+        
         if openai_sample_rate != sample_rate:
             print(f"Resampling from {openai_sample_rate}Hz to {sample_rate}Hz...")
+            # Convert bytes to numpy array
             audio_array = np.frombuffer(pcm_data, dtype=np.int16)
+            # Resample
             resampled_array = resample_audio(audio_array, openai_sample_rate, sample_rate)
+            # Convert back to bytes
             pcm_response = resampled_array.astype(np.int16).tobytes()
         else:
             pcm_response = pcm_data
         
         print(f"PCM output: {len(pcm_response)} bytes")
         print(f"Duration: {len(pcm_response) / (sample_rate * 2):.2f}s")
+        print(f"{'='*50}\n")
         
+        # Return raw PCM data
+        time4 = time.time()
+        print("Between getting OpenAI sound and sending: " + str((time4-time3)))
+        print("Total server time = " + str(time4-time0))
+
         return Response(
             content=pcm_response,
             media_type="application/octet-stream",
@@ -291,5 +343,47 @@ async def get_video_devices():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/test-screenshot",
+         summary="Test Screenshot Capture",
+         description="Test both capture methods and return info about them.",
+         tags=["Debug"])
+async def test_screenshot():
+    """Test endpoint to verify both screenshot methods work."""
+    results = {
+        "screen_screenshot": None,
+        "capture_card": None
+    }
+    
+    # Test screen screenshot
+    try:
+        frame = capture_screen_screenshot()
+        results["screen_screenshot"] = {
+            "status": "success",
+            "resolution": f"{frame.shape[1]}x{frame.shape[0]}",
+            "channels": frame.shape[2] if len(frame.shape) > 2 else 1
+        }
+    except Exception as e:
+        results["screen_screenshot"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # Test capture card
+    try:
+        frame = capture_from_capture_card()
+        results["capture_card"] = {
+            "status": "success",
+            "device_index": CAPTURE_CARD_INDEX,
+            "resolution": f"{frame.shape[1]}x{frame.shape[0]}",
+            "channels": frame.shape[2] if len(frame.shape) > 2 else 1
+        }
+    except Exception as e:
+        results["capture_card"] = {
+            "status": "error",
+            "error": str(e),
+            "device_index": CAPTURE_CARD_INDEX
+        }
+    
+    return results
 # ipconfig getifaddr en0
-# To run: uvicorn main:app --reload --host IP --port 8000
+# To run: uvicorn main:app --reload --host hostIP --port 8000
